@@ -11,8 +11,8 @@ import androidx.compose.ui.Modifier
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.jarvis.voiceassistant.ui.ChatScreen
-import com.jarvis.voiceassistant.ui.ChatViewModel
+import com.jarvis.voiceassistant.ui.NoteSessionScreen
+import com.jarvis.voiceassistant.ui.NoteSessionViewModel
 import com.jarvis.voiceassistant.ui.theme.JarvisVoiceAssistantTheme
 
 class MainActivity : ComponentActivity() {
@@ -24,15 +24,15 @@ class MainActivity : ComponentActivity() {
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
                 ) {
-                    val viewModel: ChatViewModel = viewModel(
+                    val viewModel: NoteSessionViewModel = viewModel(
                         factory = object : ViewModelProvider.Factory {
                             override fun <T : ViewModel> create(modelClass: Class<T>): T {
                                 @Suppress("UNCHECKED_CAST")
-                                return ChatViewModel(application as Application) as T
+                                return NoteSessionViewModel(application as Application) as T
                             }
                         }
                     )
-                    ChatScreen(viewModel = viewModel)
+                    NoteSessionScreen(viewModel = viewModel)
                 }
             }
         }

@@ -1,5 +1,7 @@
 package com.jarvis.voiceassistant.assistant
 
+import android.util.Log
+import com.jarvis.voiceassistant.data.Block
 import com.jarvis.voiceassistant.data.AssistantState
 import com.jarvis.voiceassistant.audio.IAudioRecorder
 import com.jarvis.voiceassistant.llm.IModelManager
@@ -9,15 +11,9 @@ import com.jarvis.voiceassistant.stt.SttModelManager
 import com.jarvis.voiceassistant.ui.ChatViewModel
 
 /**
- * Orchestrates the voice assistant pipeline
+ * Orchestrates the voice assistant pipeline.
  *
- * Flow: Audio → STT → LLM → UI
- *
- * Responsibilities:
- * - Coordinate between AudioRecorder, STTEngine, LLMEngine
- * - Update ChatViewModel state
- * - Handle errors gracefully
- * - Manage the full conversation flow
+ * Phase 1 low-latency: Voice → STT → tool classifier (1 token) → arg extractor (~5 tokens) → show in chat.
  */
 class AssistantController(
     private val audioRecorder: IAudioRecorder,
@@ -28,50 +24,103 @@ class AssistantController(
     private val viewModel: ChatViewModel
 ) {
 
+    companion object {
+        private const val LATENCY_TAG = "JarvisLatency"
+    }
+
     /**
      * Handle user speech: record → transcribe → generate → update UI
      *
      * @param durationSeconds Recording duration
      * @return Result indicating success or failure
      */
-    suspend fun handleUserSpeech(durationSeconds: Int = 5): Result<Unit> {
+    suspend fun handleUserSpeech(durationSeconds: Int = 5): Result<Unit> = runCatching {
         viewModel.updateState(AssistantState.Listening)
         val recordResult = audioRecorder.record(durationSeconds)
         if (recordResult.isFailure) {
             viewModel.updateState(AssistantState.Error(recordResult.exceptionOrNull()?.message ?: "Recording failed"))
-            return Result.failure(recordResult.exceptionOrNull() ?: Exception("Recording failed"))
+            return@runCatching Result.failure(recordResult.exceptionOrNull() ?: Exception("Recording failed"))
         }
-        val audioData = recordResult.getOrNull() ?: return Result.failure(Exception("No audio"))
+        val audioData = recordResult.getOrNull() ?: run {
+            viewModel.updateState(AssistantState.Error("No audio"))
+            return@runCatching Result.failure(Exception("No audio"))
+        }
 
         viewModel.updateState(AssistantState.ProcessingSTT)
         val transcribeResult = sttEngine.transcribe(audioData)
         if (transcribeResult.isFailure) {
             viewModel.updateState(AssistantState.Error(transcribeResult.exceptionOrNull()?.message ?: "Transcription failed"))
-            return Result.failure(transcribeResult.exceptionOrNull() ?: Exception("Transcription failed"))
+            return@runCatching Result.failure(transcribeResult.exceptionOrNull() ?: Exception("Transcription failed"))
         }
         var transcript = transcribeResult.getOrNull()?.trim() ?: ""
         if (transcript.isBlank()) transcript = "(no speech detected)"
 
-        viewModel.addUserMessage(transcript)
-
         viewModel.updateState(AssistantState.ProcessingLLM)
-        val prompt = buildChatPrompt(transcript)
-        val generateResult = llmEngine.generate(prompt, maxTokens = 256)
-        if (generateResult.isFailure) {
-            viewModel.updateState(AssistantState.Error(generateResult.exceptionOrNull()?.message ?: "Generation failed"))
-            return Result.failure(generateResult.exceptionOrNull() ?: Exception("Generation failed"))
+        val classifierPrompt = JarvisSystemPrompt.buildClassifierPrompt(transcript)
+        val t0Classifier = System.currentTimeMillis()
+        Log.d(LATENCY_TAG, "classifier entry")
+        val classifierResult = llmEngine.generate(classifierPrompt, maxTokens = 5)
+        val classifierMs = System.currentTimeMillis() - t0Classifier
+        Log.d(LATENCY_TAG, "classifier done ${classifierMs}ms")
+        if (classifierResult.isFailure) {
+            viewModel.updateState(AssistantState.Error(classifierResult.exceptionOrNull()?.message ?: "Tool selection failed"))
+            return@runCatching Result.failure(classifierResult.exceptionOrNull() ?: Exception("Tool selection failed"))
         }
-        val response = generateResult.getOrNull()?.trim() ?: "(no response)"
-        viewModel.addAssistantMessage(response)
-        viewModel.updateState(AssistantState.Idle)
-        return Result.success(Unit)
-    }
+        val toolOutput = classifierResult.getOrNull()?.trim() ?: ""
+        val tool = JarvisTools.parseToolFromOutput(toolOutput)
+        if (tool == null) {
+            viewModel.showSnackbar("Could not determine action.")
+            viewModel.updateState(AssistantState.Idle)
+            return@runCatching Result.success(Unit)
+        }
 
-    private fun buildChatPrompt(userText: String): String {
-        val history = viewModel.messages.value.joinToString("\n") { msg ->
-            if (msg.isUser) "User: ${msg.text}" else "Assistant: ${msg.text}"
+        val argPrompt = JarvisSystemPrompt.buildArgExtractorPrompt(tool, transcript)
+        val t0Args = System.currentTimeMillis()
+        Log.d(LATENCY_TAG, "arg_extract entry tool=$tool")
+        val argResult = llmEngine.generate(argPrompt, maxTokens = 30)
+        val argMs = System.currentTimeMillis() - t0Args
+        Log.d(LATENCY_TAG, "arg_extract done ${argMs}ms")
+        val raw = argResult.getOrNull()?.trim()
+        val args = when {
+            argResult.isFailure -> emptyMap<String, Any?>()
+            tool == "todo_list" -> JarvisTools.parseTodoListArgs(raw)
+            tool == "create_note" -> JarvisTools.parseCreateNoteArgs(raw)
+            else -> JarvisTools.parseArgsFromOutput(raw, tool) ?: emptyMap<String, Any?>()
         }
-        return if (history.isBlank()) "User: $userText\nAssistant:" else "$history\nAssistant:"
+
+        val execResult = ToolExecutor.execute(tool, args)
+        execResult.fold(
+            onSuccess = { block ->
+                when {
+                    block != null -> {
+                        viewModel.appendBlock(block)
+                        val confirmMsg = when (block) {
+                            is Block.Text -> "Added note."
+                            is Block.Todo -> "Added todo: ${block.items.singleOrNull()?.text ?: "..."}"
+                        }
+                        viewModel.showSnackbar(confirmMsg)
+                    }
+                    else -> viewModel.showSnackbar(formatToolResponse(tool, args))
+                }
+            },
+            onFailure = { t ->
+                viewModel.showSnackbar(t.message ?: formatToolResponse(tool, args))
+            }
+        )
+        viewModel.updateState(AssistantState.Idle)
+        Result.success(Unit)
+    }.fold(
+        onSuccess = { it },
+        onFailure = { t ->
+            viewModel.updateState(AssistantState.Error(t.message ?: "Unexpected error"))
+            Result.failure<Unit>(t)
+        }
+    )
+
+    private fun formatToolResponse(tool: String, args: Map<String, Any?>): String {
+        if (args.isEmpty()) return "Tool: $tool"
+        val argsStr = args.entries.joinToString(", ") { (k, v) -> "$k=${v?.toString()?.take(50) ?: "null"}" }
+        return "Tool: $tool\nArgs: $argsStr"
     }
 
     /**

@@ -10,12 +10,13 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Snackbar
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.MaterialTheme
@@ -24,6 +25,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
@@ -32,15 +34,17 @@ import com.google.accompanist.permissions.isGranted
 import com.google.accompanist.permissions.rememberPermissionState
 import com.google.accompanist.permissions.shouldShowRationale
 import com.jarvis.voiceassistant.data.AssistantState
-import com.jarvis.voiceassistant.data.Message
+import com.jarvis.voiceassistant.ui.blocks.BlockRenderer
 
 @OptIn(ExperimentalPermissionsApi::class)
 @Composable
 fun ChatScreen(viewModel: ChatViewModel) {
     val recordPermission = rememberPermissionState(Manifest.permission.RECORD_AUDIO)
     val initState by viewModel.initState.collectAsState()
-    val messages by viewModel.messages.collectAsState()
+    val document by viewModel.document.collectAsState()
     val assistantState by viewModel.assistantState.collectAsState()
+    val snackbarMessage by viewModel.snackbarMessage.collectAsState()
+    val snackbarHostState = remember { SnackbarHostState() }
 
     LaunchedEffect(Unit) {
         if (!recordPermission.status.isGranted && !recordPermission.status.shouldShowRationale) {
@@ -97,17 +101,44 @@ fun ChatScreen(viewModel: ChatViewModel) {
         )
         Spacer(modifier = Modifier.height(8.dp))
 
-        val listState = rememberLazyListState()
-        LazyColumn(
-            modifier = Modifier
-                .weight(1f)
-                .fillMaxWidth(),
-            state = listState,
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-            contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp)
-        ) {
-            items(messages, key = { it.timestamp }) { msg ->
-                MessageBubble(message = msg)
+        Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = 16.dp)
+            ) {
+                if (document.blocks.isEmpty()) {
+                    Text(
+                        text = "Empty document — tap mic to add notes or todos.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(vertical = 24.dp)
+                    )
+                } else {
+                    document.blocks.forEachIndexed { blockIndex, block ->
+                        BlockRenderer(
+                            block = block,
+                            onTodoToggle = { itemIndex -> viewModel.toggleTodo(blockIndex, itemIndex) }
+                        )
+                    }
+                }
+            }
+            SnackbarHost(
+                hostState = snackbarHostState,
+                modifier = Modifier.align(Alignment.BottomCenter)
+            ) { data ->
+                Snackbar(
+                    snackbarData = data,
+                    modifier = Modifier.padding(16.dp)
+                )
+            }
+        }
+
+        LaunchedEffect(snackbarMessage) {
+            snackbarMessage?.let { msg ->
+                snackbarHostState.showSnackbar(msg)
+                viewModel.clearSnackbar()
             }
         }
 
@@ -128,37 +159,6 @@ fun ChatScreen(viewModel: ChatViewModel) {
             ) {
                 Text(if (viewModel.isListening()) "⏹" else "🎤")
             }
-        }
-    }
-}
-
-@Composable
-private fun MessageBubble(message: Message) {
-    val isUser = message.isUser
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start
-    ) {
-        Card(
-            shape = RoundedCornerShape(
-                topStart = 16.dp,
-                topEnd = 16.dp,
-                bottomStart = if (isUser) 16.dp else 4.dp,
-                bottomEnd = if (isUser) 4.dp else 16.dp
-            ),
-            colors = CardDefaults.cardColors(
-                containerColor = if (isUser)
-                    MaterialTheme.colorScheme.primaryContainer
-                else
-                    MaterialTheme.colorScheme.surfaceVariant
-            ),
-            modifier = Modifier.padding(horizontal = 8.dp)
-        ) {
-            Text(
-                text = message.text,
-                style = MaterialTheme.typography.bodyMedium,
-                modifier = Modifier.padding(12.dp)
-            )
         }
     }
 }

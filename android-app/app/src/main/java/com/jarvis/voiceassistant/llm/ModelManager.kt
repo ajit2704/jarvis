@@ -36,7 +36,7 @@ class ModelManager(
     private val modelFileName: String = GGUF_FILENAME_DEFAULT,
     private val client: OkHttpClient = OkHttpClient.Builder()
         .connectTimeout(30, TimeUnit.SECONDS)
-        .readTimeout(600, TimeUnit.SECONDS)   // ~2.1 GB; allow long read for slow networks
+        .readTimeout(6000, TimeUnit.SECONDS)   // ~2.1 GB; allow long read for slow networks
         .writeTimeout(120, TimeUnit.SECONDS)
         .build()
 ) : IModelManager {
@@ -185,9 +185,9 @@ class ModelManager(
         /** Minimum size for SmolLM-1.7B-Instruct Q4_K_M (~1.06 GB). Reject truncated files to avoid -422. */
         private const val EXPECTED_MIN_MODEL_BYTES = 900_000_000L
         /** Asset path for bundled GGUF (copy to filesDir); optional. */
-        private const val ASSET_GGUF_PATH = "smolm-17b/SmolLM-1.7B-Instruct.Q4_K_M.gguf"
+        private const val ASSET_GGUF_PATH = "qwen-15b/qwen2.5-1.5b-instruct-q5_0.gguf"
         /** Default: SmolLM-1.7B-Instruct Q4_K_M (~1.06 GB) — smaller, more likely to load on Android. */
-        const val GGUF_URL_DEFAULT = "https://huggingface.co/unsloth/SmolLM2-1.7B-Instruct-GGUF/blob/main/SmolLM2-1.7B-Instruct-Q4_K_M.gguf"
-        const val GGUF_FILENAME_DEFAULT = "SmolLM-1.7B-Instruct.Q4_K_M.gguf"
+        const val GGUF_URL_DEFAULT = "https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/main/qwen2.5-1.5b-instruct-q5_0.gguf?download=true"
+        const val GGUF_FILENAME_DEFAULT = "qwen2.5-1.5b-instruct-q5_0.gguf"
     }
 }

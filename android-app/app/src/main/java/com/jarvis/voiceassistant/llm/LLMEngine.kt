@@ -3,7 +3,6 @@ package com.jarvis.voiceassistant.llm
 import android.content.Context
 import android.util.Log
 import com.runanywhere.sdk.foundation.bridge.extensions.CppBridgeLLM
-import com.runanywhere.sdk.foundation.errors.SDKError
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -18,7 +17,7 @@ import java.io.File
  */
 interface ILLMEngine {
     suspend fun initialize(modelFile: File): Result<Unit>
-    suspend fun generate(prompt: String, maxTokens: Int = 256): Result<String>
+    suspend fun generate(prompt: String, maxTokens: Int = 100): Result<String>
     fun isLoaded(): Boolean
     fun release()
 }
@@ -62,10 +61,10 @@ class LLMEngine(private val context: Context) : ILLMEngine {
             CppBridgeLLM.create()
             // Mobile-friendly: n_ctx=1024 (~2.1 GB RAM). SDK may not pass to native yet; when it does, helps avoid -422.
             val modelConfig = CppBridgeLLM.ModelConfig(
-                contextLength = 1024,
-                batchSize = 256,
-                useMemoryMap = false,
-                threads = 4,
+                contextLength = 256,
+                batchSize = 64,
+                useMemoryMap = true,
+                threads = Runtime.getRuntime().availableProcessors(),
                 gpuLayers = 0
             )
             val result = CppBridgeLLM.loadModel(
@@ -91,16 +90,11 @@ class LLMEngine(private val context: Context) : ILLMEngine {
         runCatching {
             val config = CppBridgeLLM.GenerationConfig(
                 maxTokens = maxTokens,
-                temperature = 0.7f,
-                topP = 0.9f
+                temperature = 0.1f,
+                topP = 0.9f,
             )
             val result = CppBridgeLLM.generate(prompt, config)
             result.text
-        }.recoverCatching { e ->
-            when (e) {
-                is SDKError -> throw e
-                else -> throw e
-            }
         }
     }
 
@@ -119,7 +113,6 @@ class LLMEngine(private val context: Context) : ILLMEngine {
     companion object {
         private const val TAG = "JarvisLLM"
         private const val MODEL_ID = "jarvis-llm"
-        /** Minimum expected GGUF size (3B Q5 ~2GB); catch truncated/corrupt files. */
         private const val MIN_GGUF_BYTES = 100L * 1024 * 1024 // 100 MB
     }
 }

@@ -38,7 +38,7 @@ class STTEngine(
             if (!dir.isDirectory || !dir.exists()) throw IllegalStateException("Model path is not a directory: ${dir.absolutePath}")
             val transcriber = Transcriber()
             // Sherpa-onnx tiny-en .ort is a streaming model; use TINY_STREAMING so transcribeWithoutStreaming works
-            transcriber.loadFromFiles(dir.absolutePath, JNI.MOONSHINE_MODEL_ARCH_TINY_STREAMING)
+            transcriber.loadFromFiles(dir.absolutePath, JNI.MOONSHINE_MODEL_ARCH_SMALL_STREAMING)
             this@STTEngine.transcriber = transcriber
         }
     }
@@ -80,6 +80,6 @@ class STTEngine(
     companion object {
         const val SAMPLE_RATE = 16000
         /** Minimum bytes (PCM 16-bit mono 16kHz) ~1 second to avoid native "vector" errors. */
-        private const val MIN_AUDIO_BYTES = SAMPLE_RATE * 2
+        const val MIN_AUDIO_BYTES = SAMPLE_RATE * 2
     }
 }

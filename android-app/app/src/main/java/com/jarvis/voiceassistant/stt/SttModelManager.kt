@@ -159,7 +159,7 @@ class SttModelManager(
          * Files: encoder.ort, frontend.ort, decoder_kv.ort, adapter.ort, cross_kv.ort, tokenizer.bin, streaming_config.json.
          */
         TINY_STREAMING_EN(
-            dirName = "tiny-streaming-en",
+            dirName = "small-streaming-en",
             repo = "",
             files = emptyList(),
             requiredFilesOverride = listOf(

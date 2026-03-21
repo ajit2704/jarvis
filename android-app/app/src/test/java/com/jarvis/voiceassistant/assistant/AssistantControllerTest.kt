@@ -2,40 +2,56 @@ package com.jarvis.voiceassistant.assistant
 
 import com.jarvis.voiceassistant.audio.IAudioRecorder
 import com.jarvis.voiceassistant.llm.ILLMEngine
+import com.jarvis.voiceassistant.llm.IModelManager
 import com.jarvis.voiceassistant.stt.ISTTEngine
+import com.jarvis.voiceassistant.stt.SttModelManager
 import com.jarvis.voiceassistant.ui.ChatViewModel
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.*
 import org.junit.Before
 import org.junit.Test
+import org.junit.runner.RunWith
 import org.mockito.Mock
 import org.mockito.MockitoAnnotations
 import org.mockito.kotlin.*
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
+import org.robolectric.RuntimeEnvironment
 
 @OptIn(ExperimentalCoroutinesApi::class)
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [28])
 class AssistantControllerTest {
-    
+
     @Mock
     private lateinit var audioRecorder: IAudioRecorder
-    
+
     @Mock
     private lateinit var sttEngine: ISTTEngine
-    
+
+    @Mock
+    private lateinit var sttModelManager: SttModelManager
+
     @Mock
     private lateinit var llmEngine: ILLMEngine
-    
+
+    @Mock
+    private lateinit var modelManager: IModelManager
+
     private lateinit var viewModel: ChatViewModel
     private lateinit var controller: AssistantController
-    
+
     @Before
     fun setup() {
         MockitoAnnotations.openMocks(this)
-        viewModel = ChatViewModel()
+        viewModel = ChatViewModel(RuntimeEnvironment.getApplication())
         controller = AssistantController(
             audioRecorder = audioRecorder,
+            sttModelManager = sttModelManager,
             sttEngine = sttEngine,
             llmEngine = llmEngine,
+            modelManager = modelManager,
             viewModel = viewModel
         )
     }

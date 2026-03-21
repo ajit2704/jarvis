@@ -6,7 +6,8 @@ import androidx.lifecycle.viewModelScope
 import com.jarvis.voiceassistant.assistant.AssistantController
 import com.jarvis.voiceassistant.audio.AudioRecorder
 import com.jarvis.voiceassistant.data.AssistantState
-import com.jarvis.voiceassistant.data.Message
+import com.jarvis.voiceassistant.data.Block
+import com.jarvis.voiceassistant.data.Document
 import com.jarvis.voiceassistant.llm.LLMEngine
 import com.jarvis.voiceassistant.llm.ModelManager
 import com.jarvis.voiceassistant.stt.STTEngine
@@ -15,6 +16,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import java.util.UUID
 
 /** Pipeline init state for chat screen. */
 sealed class ChatInitState {
@@ -45,8 +47,14 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         viewModel = this
     )
 
-    private val _messages = MutableStateFlow<List<Message>>(emptyList())
-    val messages: StateFlow<List<Message>> = _messages.asStateFlow()
+    private val _document = MutableStateFlow(
+        Document(id = UUID.randomUUID().toString(), title = "My Workspace", blocks = mutableListOf())
+    )
+    val document: StateFlow<Document> = _document.asStateFlow()
+
+    /** One-off message for Snackbar (e.g. "Added todo", list summary, error). No chat. */
+    private val _snackbarMessage = MutableStateFlow<String?>(null)
+    val snackbarMessage: StateFlow<String?> = _snackbarMessage.asStateFlow()
 
     private val _assistantState = MutableStateFlow<AssistantState>(AssistantState.Idle)
     val assistantState: StateFlow<AssistantState> = _assistantState.asStateFlow()
@@ -65,22 +73,21 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     /** Start recording → STT → LLM and update messages. */
     fun startVoiceInput(durationSeconds: Int = 5) {
         viewModelScope.launch {
-            assistantController.handleUserSpeech(durationSeconds)
+            try {
+                assistantController.handleUserSpeech(durationSeconds)
+            } catch (t: Throwable) {
+                _assistantState.value = AssistantState.Error(t.message ?: "Voice pipeline failed")
+            }
         }
     }
 
-    fun addUserMessage(text: String) {
-        if (text.isNotBlank()) {
-            val message = Message(text = text.trim(), isUser = true)
-            _messages.value = _messages.value + message
-        }
+    /** Show feedback in Snackbar (replaces chat). */
+    fun showSnackbar(text: String) {
+        if (text.isNotBlank()) _snackbarMessage.value = text
     }
 
-    fun addAssistantMessage(text: String) {
-        if (text.isNotBlank()) {
-            val message = Message(text = text.trim(), isUser = false)
-            _messages.value = _messages.value + message
-        }
+    fun clearSnackbar() {
+        _snackbarMessage.value = null
     }
 
     fun updateState(state: AssistantState) {
@@ -92,11 +99,34 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     fun isProcessing(): Boolean = _assistantState.value is AssistantState.ProcessingSTT ||
         _assistantState.value is AssistantState.ProcessingLLM
 
-    fun clearMessages() {
-        _messages.value = emptyList()
+    /** Append a block to the workspace document (e.g. from ToolExecutor). Emits new document so UI updates. */
+    fun appendBlock(block: Block) {
+        val doc = _document.value
+        _document.value = Document(
+            id = doc.id,
+            title = doc.title,
+            blocks = (doc.blocks + block).toMutableList()
+        )
     }
 
-    fun getLastMessage(): Message? = _messages.value.lastOrNull()
+    /** Toggle completed state of a todo item. blockIndex = index in document.blocks; itemIndex = index in Todo.items. */
+    fun toggleTodo(blockIndex: Int, itemIndex: Int) {
+        val doc = _document.value
+        val block = doc.blocks.getOrNull(blockIndex) as? Block.Todo ?: return
+        val item = block.items.getOrNull(itemIndex) ?: return
+        val newItems = block.items.toMutableList().apply { set(itemIndex, item.copy(completed = !item.completed)) }
+        val newBlocks = doc.blocks.toMutableList().apply { set(blockIndex, Block.Todo(newItems)) }
+        _document.value = Document(id = doc.id, title = doc.title, blocks = newBlocks)
+    }
+
+    /** Summary of all todo items (for "show my list" voice → Snackbar). */
+    fun getTodoListSummary(): String {
+        val todos = _document.value.blocks
+            .filterIsInstance<Block.Todo>()
+            .flatMap { it.items }
+        if (todos.isEmpty()) return "Your list is empty."
+        return todos.mapIndexed { i, t -> "${i + 1}. ${if (t.completed) "✓" else "○"} ${t.text}" }.joinToString("\n")
+    }
 
     override fun onCleared() {
         assistantController.release()
